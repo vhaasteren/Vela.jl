@@ -193,6 +193,43 @@ def test_compare_script(dataset):
     pyvela_compare_script.main(args)
 
 
+@pytest.mark.parametrize("dataset", ["sim_1"])
+def test_script_ptmcmc(dataset):
+    pytest.importorskip("PTMCMCSampler")
+
+    datadir = f"{os.path.dirname(os.path.realpath(__file__))}/datafiles"
+    parfile, timfile = f"{datadir}/{dataset}.par", f"{datadir}/{dataset}.tim"
+    outdir = f"_{dataset}_ptmcmc_out"
+
+    prior_file = "__prior.json"
+    with open(prior_file, "w") as pf:
+        print(prior_str, file=pf)
+
+    args = (
+        f"{parfile} {timfile} -P {prior_file} -o {outdir} -f --sampler ptmcmc "
+        "-A PHOFF F0 -N 600 -b 200 -t 10"
+    ).split()
+    pyvela_script.main(args)
+
+    assert os.path.isdir(outdir)
+    assert os.path.isfile(f"{outdir}/summary.json")
+    assert os.path.isfile(f"{outdir}/{prior_file}")
+    assert os.path.isfile(f"{outdir}/param_names.txt")
+    assert os.path.isfile(f"{outdir}/samples_raw.npy")
+    assert os.path.isfile(f"{outdir}/samples.npy")
+    assert os.path.isfile(f"{outdir}/param_autocorr.txt")
+
+    with open(f"{outdir}/summary.json") as sf:
+        summary = json.load(sf)
+        assert summary["sampler"]["sampler"] == "ptmcmc"
+
+    samples_raw = np.load(f"{outdir}/samples_raw.npy")
+    param_names = np.genfromtxt(f"{outdir}/param_names.txt", dtype=str)
+    assert samples_raw.ndim == 2
+    assert samples_raw.shape[0] > 0
+    assert samples_raw.shape[1] == len(param_names)
+
+
 @pytest.mark.parametrize("dataset", ["NGC6440E"])
 def test_jlso_script(dataset):
     datadir = f"{os.path.dirname(os.path.realpath(__file__))}/datafiles"

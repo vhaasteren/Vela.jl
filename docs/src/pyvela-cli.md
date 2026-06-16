@@ -1,20 +1,22 @@
 # Command line utilities
 
-The `pyvela` package included a few command line utilities.
+The `pyvela` package includes a few command line utilities.
 
 ## `pyvela` script
 
-The `pyvela` script can be used to do simple analysis runs where fine control over data handling, 
+The `pyvela` script can be used to do simple analysis runs where fine control over data handling,
 prior distributions, sampler, etc is not necessary. It has the followingb syntax.
 
 ```
 $ pyvela -h
 
 usage: pyvela [-h] [-J JLSO_FILE] [-P PRIOR_FILE] [--no_marg_gp_noise] [-A ANALYTIC_MARG [ANALYTIC_MARG ...]] [-T TRUTH] [-C CHEAT_PRIOR_SCALE] [-o OUTDIR] [-f]
+              [--sampler {emcee,ptmcmc}]
               [-N NSTEPS] [-w WALKERS] [-b BURNIN] [-t THIN] [-r] [-s INITIAL_SAMPLE_SPREAD] [-c]
               par_file tim_file
 
-A command line interface for the Vela.jl pulsar timing & noise analysis package. Uses emcee for sampling. This may not be appropriate for more complex datasets.
+A command line interface for the Vela.jl pulsar timing & noise analysis package. Supports `emcee` and
+NANOGrav `PTMCMCSampler` backends. This may not be appropriate for more complex datasets.
 Write your own scripts for such cases.
 
 positional arguments:
@@ -38,6 +40,8 @@ options:
                         The scale factor by which the frequentist uncertainties are multiplied to get the 'cheat' prior distributions. (default: 100)
   -o, --outdir OUTDIR   The output directory. Will throw an error if it already exists (unless -f is given). (default: pyvela_results)
   -f, --force_rewrite   Force rewrite the output directory if it exists. (default: False)
+  --sampler {emcee,ptmcmc}
+                        Sampler backend to use. (default: emcee)
   -N, --nsteps NSTEPS   Number of ensemble MCMC iterations (default: 6000)
   -w, --walkers WALKERS
                         Number of ensemble MCMC walkers as a multiple of the number of dimensions (default: 5)
@@ -50,7 +54,12 @@ options:
   -c, --center_epochs   Center the epochs of the pulsar timing model. (default: False)
 ```
 
-This command created saves the MCMC chain and related metadata into an output directory. This includes the following files. The parameter order in all of these files is the same.
+Sampling is always done in `Vela.jl`'s internal coordinates for all sampler backends.
+The saved `samples_raw.npy` file remains in internal units, while `samples.npy` is converted to
+user-facing units through the scale factors.
+
+This command creates and saves the MCMC chain and related metadata into an output directory.
+This includes the following files. The parameter order in all of these files is the same.
 
   - `summary.json`: A `JSON` file containing information about the inputs and the system environment. Useful for debugging.
   - The input `par` and `tim` files
@@ -66,13 +75,14 @@ This command created saves the MCMC chain and related metadata into an output di
   - `params_std.txt`: The parameter standard deviations estimated from the MCMC chain
   - `param_units.txt`: Parameter units represented as `astropy.units`-compatible strings. Empty rows represent dimensionless quantities.
   - `param_default_values.txt`: "Pre-fit" values taken from the input par file.
-  - `param_autocorr.txt`: MCMC autocorrelation length for each free parameter.
+  - `param_autocorr.txt`: MCMC autocorrelation length for each free parameter when available. For sampler
+    backends without emcee autocorr support in the CLI path, this may contain placeholder values.
   - `<PSR>.median.par`: A "post-fit" `par` file containing the posterior median values taken from the MCMC chain.
   - `residuals.txt`: Post-fit residuals computed using the posterior median values.
   - `prior_evals.npy`: The prior distributions evaluated within the posterior distribution range. Used for plotting.
   - `prior_info.json`: A `JSON` file containing information about *all* prior distributions used for the analysis.
   - A `JLSO` file that serializes the `SPNTA` object.
-  - `chain.h5`: HDF5 file containing all samples.
+  - `chain.h5`: HDF5 file containing all samples (emcee backend).
 
 ## `pyvela-plot` script
 

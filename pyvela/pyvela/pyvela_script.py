@@ -4,6 +4,7 @@ from copy import deepcopy
 import json
 import os
 import shutil
+import warnings
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 
 import emcee
@@ -24,9 +25,9 @@ def parse_args(argv):
     parser = ArgumentParser(
         prog="pyvela",
         description="A command line interface for the Vela.jl pulsar timing &"
-        " noise analysis package. Uses emcee for sampling. This may not be "
-        "appropriate for more complex datasets. Write your own scripts for "
-        "such cases.",
+        " noise analysis package. Supports emcee and PTMCMCSampler sampling. "
+        "This may not be appropriate for more complex datasets. Write your own "
+        "scripts for such cases.",
         formatter_class=ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -89,11 +90,17 @@ def parse_args(argv):
         help="Force rewrite the output directory if it exists.",
     )
     parser.add_argument(
+        "--sampler",
+        choices=["emcee", "ptmcmc"],
+        default="emcee",
+        help="Sampler backend to use.",
+    )
+    parser.add_argument(
         "-N",
         "--nsteps",
         default=6000,
         type=int,
-        help="Number of ensemble MCMC iterations",
+        help="Number of sampler iterations",
     )
     parser.add_argument(
         "-w",
@@ -171,6 +178,8 @@ def validate_input(args):
     assert (
         args.initial_sample_spread > 0 and args.initial_sample_spread <= 1
     ), "initial_sample_spread must be > 0 and <= 1."
+    if args.sampler == "ptmcmc":
+        assert not args.resume, "PTMCMCSampler resume is not supported yet."
 
 
 def prepare_outdir(args):
@@ -216,13 +225,14 @@ def main(argv=None):
         args.tim_file = results.input_tim_file
         args.cheat_prior_scale = summary_info["input"]["cheat_prior_scale"]
         args.analytic_marg = summary_info["input"]["analytic_marginalized_params"]
-        args.prior_fie = (
+        args.prior_file = (
             f'{args.outdir}/{summary_info["input"]["custom_prior_file"]}'
             if summary_info["input"]["custom_prior_file"] is not None
             else None
         )
         args.jlso_file = results.jlso_file
         args.center_epochs = summary_info["input"]["center_epochs"]
+        args.sampler = summary_info["sampler"]["sampler"]
 
     if "all" in args.analytic_marg:
         assert (
@@ -263,20 +273,28 @@ def main(argv=None):
         spnta.save_jlso(jlsofile)
         spnta.jlsofile = jlsofile
 
-    nwalkers = spnta.ndim * args.walkers
+    if args.sampler == "emcee":
+        samples_raw, sampler_info = run_emcee(spnta, args)
+    elif args.sampler == "ptmcmc":
+        samples_raw, sampler_info = run_ptmcmc(spnta, args)
+    else:  # pragma: no cover
+        raise ValueError(f"Unsupported sampler backend {args.sampler}")
 
     spnta.save_pre_analysis_summary(
         args.outdir,
-        {
-            "sampler": "emcee",
-            "nwalkers": nwalkers,
-            "nsteps": args.nsteps,
-            "burnin": args.burnin,
-            "thin": args.thin,
-            "vectorized": True,
-        },
+        sampler_info,
         args.truth,
     )
+
+    spnta.save_results(
+        args.outdir,
+        samples_raw,
+        compute_autocorr=(args.sampler == "emcee"),
+    )
+
+
+def run_emcee(spnta: SPNTA, args):
+    nwalkers = spnta.ndim * args.walkers
 
     p0 = get_start_samples(spnta, args.initial_sample_spread, nwalkers)
 
@@ -298,11 +316,85 @@ def main(argv=None):
         )
 
     samples_raw = sampler.get_chain(flat=True, discard=args.burnin, thin=args.thin)
+    sampler_info = {
+        "sampler": "emcee",
+        "nwalkers": nwalkers,
+        "nsteps": args.nsteps,
+        "burnin": args.burnin,
+        "thin": args.thin,
+        "vectorized": True,
+    }
+    return samples_raw, sampler_info
 
-    spnta.save_results(
-        args.outdir,
-        samples_raw,
+
+def run_ptmcmc(spnta: SPNTA, args):
+    """Run NANOGrav PTMCMCSampler using internal coordinates."""
+    if args.walkers != 5:
+        warnings.warn(
+            "The --walkers option is emcee-specific and ignored when --sampler ptmcmc is used."
+        )
+
+    try:
+        from PTMCMCSampler.PTMCMCSampler import PTSampler
+    except Exception as e:  # pragma: no cover
+        raise ImportError(
+            "PTMCMCSampler is required for --sampler ptmcmc. Install the PTMCMCSampler package."
+        ) from e
+
+    p0 = get_start_point(spnta, args.initial_sample_spread)
+    # Diagonal starter covariance in internal coordinates.
+    cov = np.diag(np.maximum(np.abs(p0), 1.0) ** 2 * 1e-4)
+
+    chain_dir = f"{args.outdir}/ptmcmc_chains"
+    if not os.path.isdir(chain_dir):
+        os.mkdir(chain_dir)
+
+    sampler = PTSampler(
+        spnta.ndim,
+        spnta.lnlike,
+        spnta.lnprior,
+        cov,
+        outDir=chain_dir,
+        resume=False,
     )
+    cov_update = max(1, min(args.burnin, 1000))
+    sampler.sample(
+        p0,
+        args.nsteps,
+        burn=args.burnin,
+        thin=args.thin,
+        covUpdate=cov_update,
+    )
+
+    # PTMCMCSampler writes the cold chain to chain_1[.0].txt.
+    chain_file = None
+    for fname in ("chain_1.0.txt", "chain_1.txt"):
+        fpath = f"{chain_dir}/{fname}"
+        if os.path.isfile(fpath):
+            chain_file = fpath
+            break
+    if chain_file is None:  # pragma: no cover
+        raise FileNotFoundError(
+            f"Unable to find PTMCMCSampler cold chain file in {chain_dir}"
+        )
+
+    chain = np.atleast_2d(np.loadtxt(chain_file))
+    if chain.shape[1] < spnta.ndim:  # pragma: no cover
+        raise ValueError(
+            f"PTMCMCSampler chain has only {chain.shape[1]} columns, expected at least {spnta.ndim} parameter columns."
+        )
+    samples_raw = chain[:, : spnta.ndim]
+    sampler_info = {
+        "sampler": "ptmcmc",
+        "nsteps": args.nsteps,
+        "burnin": args.burnin,
+        "thin": args.thin,
+        "covUpdate": cov_update,
+        "chain_dir": "ptmcmc_chains",
+        "chain_file": os.path.basename(chain_file),
+        "vectorized": False,
+    }
+    return samples_raw, sampler_info
 
 
 def get_start_samples(spnta: SPNTA, s: float, nwalkers: int) -> np.ndarray:
@@ -318,3 +410,13 @@ def get_start_samples(spnta: SPNTA, s: float, nwalkers: int) -> np.ndarray:
         else p0_
     )
     return p0
+
+
+def get_start_point(spnta: SPNTA, s: float) -> np.ndarray:
+    """Get one PTMCMC start point in internal coordinates."""
+    p0_ = np.array(spnta.prior_transform(np.random.rand(spnta.ndim)))
+    return (
+        (1 - s) * spnta.maxpost_params + s * p0_
+        if np.isfinite(spnta.lnpost(spnta.default_params))
+        else p0_
+    )

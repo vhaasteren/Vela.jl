@@ -24,6 +24,7 @@ dependencies = [
     "pint-pulsar>=1.1.3",
     "juliacall>=0.9",
     "emcee",
+    "PTMCMCSampler",
     "numdifftools",
     "h5py",
     "corner",

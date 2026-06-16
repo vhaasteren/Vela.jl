@@ -987,6 +987,7 @@ class SPNTA:
         self,
         outdir: str,
         samples_raw: np.ndarray,
+        compute_autocorr: bool = True,
     ) -> None:
         """Given the posterior samples, save the results into an output directory.
         `pyvela` script uses this function to save the results.
@@ -1044,10 +1045,18 @@ class SPNTA:
         )
 
         self.save_resids(params_median, f"{outdir}/residuals.txt")
-        param_autocorr = emcee.autocorr.integrated_time(
-            samples_raw, quiet=True, has_walkers=False
-        )
-        np.savetxt(f"{outdir}/param_autocorr.txt", param_autocorr)
+        if compute_autocorr:
+            param_autocorr = emcee.autocorr.integrated_time(
+                samples_raw, quiet=True, has_walkers=False
+            )
+            np.savetxt(f"{outdir}/param_autocorr.txt", param_autocorr)
+        else:
+            # Keep output shape/file expectations stable for tools that look for
+            # this file, even when sampler-specific autocorr is not available.
+            np.savetxt(
+                f"{outdir}/param_autocorr.txt",
+                np.full(self.ndim, np.nan, dtype=float),
+            )
 
         np.savetxt(
             f"{outdir}/marginalized_param_medians.txt",
