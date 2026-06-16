@@ -1,5 +1,6 @@
 # Unreleased
 ## Added
+- Support for hierarchical triple systems: an outer DD orbit (PINT `BinaryDD2`, selected by a `BINARY2` line with `_2`-suffixed parameters) is represented by the new `BinaryOuter` component, applied before the inner binary so its delay is propagated into the inner orbit's epoch.
 - Fit timing parameters using PINT while creating SPNTA object to ensure that uncertainties exist for creating cheat priors.
 ## Changed
 ## Fixed

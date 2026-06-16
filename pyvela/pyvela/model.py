@@ -197,6 +197,20 @@ def pint_components_to_vela(model: TimingModel, toas: TOAs):
             model["FB0"].quantity is not None
         ), "Expecting one and only one of PB and FB0. Please check the par file."
         use_fbx = model["FB0"].quantity is not None
+
+        # Outer orbit of a hierarchical triple, selected by the BINARY2 line.
+        # It must be applied before the inner binary so that its delay is
+        # accumulated first and propagated into the inner orbit's epoch. Only
+        # the DD outer orbit (PINT `BinaryDD2`) is supported, since Vela has no
+        # BT model. The outer orbit is always PB-based (FB params are dropped).
+        if model["BINARY2"].value is not None:
+            if "BinaryDD2" in component_names:
+                components.append(vl.BinaryOuter(jl.Symbol("_2"), vl.BinaryDD(False)))
+            else:
+                raise NotImplementedError(
+                    f"BINARY2 {model['BINARY2'].value} not (yet?) implemented."
+                )  # pragma: no cover
+
         if "BinaryELL1" in component_names:
             components.append(vl.BinaryELL1(use_fbx))
         elif "BinaryELL1H" in component_names:
@@ -405,6 +419,16 @@ def fix_params(model: TimingModel, toas: TOAs) -> None:
     for p in zeroable_params:
         if p in model and model[p].quantity is None:
             model[p].value = 0
+
+    # Outer orbit of a hierarchical triple: the `_2`-suffixed parameters must
+    # also be defaulted so that the wrapped binary sees a complete set of
+    # parameters (e.g. M2_2/SINI_2 are unset by default and would otherwise be
+    # dropped during conversion).
+    if "BINARY2" in model and model["BINARY2"].value is not None:
+        for p in zeroable_params:
+            p2 = f"{p}_2"
+            if p2 in model and model[p2].quantity is None:
+                model[p2].value = 0
 
     # Replace RN* parameters by TNRED* parameters.
     if "PLRedNoise" in model.components:

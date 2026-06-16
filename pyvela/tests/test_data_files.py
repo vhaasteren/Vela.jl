@@ -452,3 +452,64 @@ def test_analytic_marginalize_params_wb():
         "JUMP2",
         "DMJUMP1",
     }
+
+
+def test_triple_binary_conversion():
+    # Hierarchical triple: a normal inner DD binary plus an outer DD orbit
+    # (BINARY2 with `_2`-suffixed parameters). The outer orbit is frozen here so
+    # we don't depend on cheat-prior fitting for its parameters.
+    par = """
+        PSRJ      J1855+0900
+        RAJ       18:57:36.3932884    1
+        DECJ      +09:43:17.29196     1
+        F0        186.49408156698     1
+        F1        -6.2049547e-16      1
+        PEPOCH    49453
+        POSEPOCH  49453
+        DMEPOCH   49453
+        DM        13.29709
+        BINARY    DD
+        PB        12.327171194774     1
+        T0        49452.940695077     1
+        A1        9.2307804313        1
+        OM        276.551421806       1
+        ECC       2.1745265668e-05    1
+        M2        0.2611131248        1
+        SINI      0.9974171734        1
+        BINARY2   DD
+        PB_2      1400.0
+        T0_2      49452.0
+        A1_2      120.0
+        OM_2      110.0
+        ECC_2     0.3
+        UNITS     TDB
+        EPHEM     DE421
+        CLK       TT(BIPM2019)
+    """
+    m = get_model(StringIO(par))
+    assert "BinaryDD" in m.components and "BinaryDD2" in m.components
+
+    t = make_fake_toas_uniform(
+        startMJD=53400,
+        endMJD=55000,
+        ntoas=100,
+        model=m,
+        add_noise=True,
+    )
+
+    spnta = SPNTA.from_pint(m, t)
+
+    comp_is_outer = [bool(vl.isa(c, vl.BinaryOuter)) for c in spnta.model.components]
+    comp_is_inner_dd = [
+        bool(vl.isa(c, vl.BinaryDD)) and not bool(vl.isa(c, vl.BinaryOuter))
+        for c in spnta.model.components
+    ]
+
+    assert any(comp_is_outer), "Expected a BinaryOuter component for the outer orbit."
+    assert any(comp_is_inner_dd), "Expected a BinaryDD component for the inner orbit."
+
+    # The outer orbit must be applied before the inner binary so that its delay
+    # is propagated into the inner orbit's epoch.
+    assert comp_is_outer.index(True) < comp_is_inner_dd.index(True)
+
+    assert all(np.isfinite(spnta.time_residuals(spnta.default_params)))

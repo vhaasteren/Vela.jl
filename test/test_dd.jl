@@ -126,6 +126,65 @@ end
     end
 end
 
+@testset "BinaryOuter" begin
+    toa1 = TOA(
+        time(Double64((53471.0 - epoch_mjd) * day_to_s)),
+        time(1e-6),
+        frequency(2.5e9),
+        dimensionless(Double64(0.0)),
+        default_ephem(),
+        1,
+    )
+    ctoa1 = TOACorrection()
+
+    # Inner binary parameters (canonical names) plus the outer orbit's
+    # `_2`-suffixed parameters, as in a hierarchical triple.
+    params = (
+        T0 = time((53470.0 - epoch_mjd) * day_to_s),
+        PB = time(8e4),
+        PBDOT = dimensionless(1e-10),
+        A1 = distance(5.0),
+        A1DOT = dimensionless(0.0),
+        ECC = dimensionless(0.5),
+        EDOT = frequency(0.0),
+        OM = dimensionless(0.1),
+        OMDOT = frequency(0.0),
+        DR = dimensionless(0.0),
+        DTH = dimensionless(0.0),
+        GAMMA = time(0.0),
+        M2 = mass(5e-9),
+        SINI = dimensionless(0.5),
+        T0_2 = time((53400.0 - epoch_mjd) * day_to_s),
+        PB_2 = time(8e6),
+        PBDOT_2 = dimensionless(0.0),
+        A1_2 = distance(50.0),
+        A1DOT_2 = dimensionless(0.0),
+        ECC_2 = dimensionless(0.3),
+        EDOT_2 = frequency(0.0),
+        OM_2 = dimensionless(0.2),
+        OMDOT_2 = frequency(0.0),
+        DR_2 = dimensionless(0.0),
+        DTH_2 = dimensionless(0.0),
+        GAMMA_2 = time(0.0),
+        M2_2 = mass(0.0),
+        SINI_2 = dimensionless(0.0),
+    )
+
+    # The renamed (suffix-stripped) parameter tuple must expose the canonical
+    # names that the wrapped binary reads.
+    stripped = Vela.strip_param_suffix(params, Val(Symbol("_2")))
+    @test stripped.PB == params.PB_2
+    @test stripped.A1 == params.A1_2
+    @test stripped.ECC == params.ECC_2
+    @test !hasproperty(stripped, :PB_2)
+
+    outer = BinaryOuter(Symbol("_2"), BinaryDD(false))
+    ctoa_outer = correct_toa(outer, toa1, ctoa1, params)
+    @test isfinite(ctoa_outer.delay) && isfinite(ctoa_outer.doppler)
+    @test @ballocated(correct_toa($outer, $toa1, $ctoa1, $params)) == 0
+    display(outer)
+end
+
 @testset "BinaryDDK" begin
     toa1 = TOA(
         time(Double64((53471.0 - epoch_mjd) * day_to_s)),
